@@ -3,15 +3,15 @@ import os
 
 # --- Parameter ---
 NUM_CLASSES = 50
-BATCH_SIZE = 32
+BATCH_SIZE = 128
 LEARNING_RATE = 1e-4
-NUM_EPOCHS = 20
+NUM_EPOCHS = 50
 IMAGE_SIZE = 224 # Pre-train model (ResNet) default 224x224
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Dataset paths (please modify according to your actual paths)
-TRAIN_DIR = r'ML\ML_IAII\2-ML_IAII_Classification\dataset\train'
-TEST_DIR = r'ML\ML_IAII\2-ML_IAII_Classification\dataset\test-renamed_images'
+TRAIN_DIR = 'D:/Programs/ML/ML_IAII/2-ML_IAII_Classification/dataset/train'
+TEST_DIR = 'D:/Programs/ML/ML_IAII/2-ML_IAII_Classification/dataset/test-renamed_images'
 
 # File settings
 MODEL_PATH = 'best_simpsons_cnn.pth'
