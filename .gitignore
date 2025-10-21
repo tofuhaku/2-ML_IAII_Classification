@@ -1,5 +1,6 @@
 *.png
 *.csv
+*.pth
 /dataset
 /models
 /checkpoints
