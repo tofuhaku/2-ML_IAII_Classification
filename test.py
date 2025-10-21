@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 
 # Check if CUDA is available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f'Using device: {device}')
+# print(f'Using device: {device}')
 
 # Define character names
 CHARACTER_NAMES = [
@@ -32,7 +32,7 @@ CHARACTER_NAMES = [
     'sideshow_bob', 'sideshow_mel', 'snake_jailbird', 'timothy_lovejoy',
     'troy_mcclure', 'waylon_smithers'
 ]
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 
 # Create character to index mapping
 char_to_idx = {char: idx for idx, char in enumerate(CHARACTER_NAMES)}
@@ -320,9 +320,17 @@ def main():
     val_size = len(train_dataset) - train_size
     train_subset, val_subset = random_split(train_dataset, [train_size, val_size])
 
+    # Enhanced splitting with different transforms
+    train_full_aug = SimpsonsDataset('dataset/train', transform=train_transform, is_train=True)
+    val_full_clean = SimpsonsDataset('dataset/train', transform=val_transform, is_train=True)
+    train_indices = list(range(len(train_full_aug)))
+    train_idx, val_idx = train_test_split(train_indices, test_size=0.2, random_state=42)
+    train_subset = torch.utils.data.Subset(train_full_aug, train_idx)
+    val_subset = torch.utils.data.Subset(val_full_clean, val_idx)
+
     # Create validation dataset with different transforms
-    val_dataset = SimpsonsDataset('dataset/train', transform=val_transform, is_train=True)
-    val_subset.dataset = val_dataset
+    # val_dataset = SimpsonsDataset('dataset/train', transform=val_transform, is_train=True)
+    # val_subset.dataset = val_dataset
 
     print(f"Training samples: {len(train_subset)}")
     print(f"Validation samples: {len(val_subset)}")
