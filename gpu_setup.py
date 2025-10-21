@@ -18,7 +18,7 @@ def check_gpu_availability():
     print(f"CUDA Available: {cuda_available}")
 
     if not cuda_available:
-        print("\n❌ CUDA is not available!")
+        print("\nCUDA is not available!")
         print("\nPossible solutions:")
         print("1. Install NVIDIA GPU drivers")
         print("2. Install CUDA toolkit")
