@@ -1,436 +1,104 @@
-"""
-Training script for The Simpsons Character Recognition
-Handles model training with pre-training, fine-tuning, and early stopping
-"""
+# train.py
 
-import os
-import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR
-from torch.cuda.amp import autocast, GradScaler
-import numpy as np
+import pandas as pd
 from tqdm import tqdm
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.metrics import classification_report, confusion_matrix
-import config
-from model import create_model, get_loss_function
-from data_preprocess import create_data_loaders, compute_class_weights
+import os
+from config import DEVICE, MODEL_PATH, OUTPUT_CSV, IDX_TO_CLASS
 
-class EarlyStopping:
-    """Early stopping to avoid overfitting"""
+# --- Test and Validation data ---
+def train_model(model, criterion, optimizer, train_loader, val_loader, num_epochs):
+    """ Model training and validation loop """
+    best_acc = 0.0
 
-    def __init__(self, patience=7, min_delta=0, restore_best_weights=True):
-        self.patience = patience
-        self.min_delta = min_delta
-        self.restore_best_weights = restore_best_weights
-        self.best_loss = None
-        self.counter = 0
-        self.best_weights = None
+    print(f"--- Start training on {DEVICE} ---")
 
-    def __call__(self, val_loss, model):
-        if self.best_loss is None:
-            self.best_loss = val_loss
-            self.save_checkpoint(model)
-        elif self.best_loss - val_loss > self.min_delta:
-            self.best_loss = val_loss
-            self.counter = 0
-            self.save_checkpoint(model)
-        else:
-            self.counter += 1
+    for epoch in range(num_epochs):
+        # --- Training phase ---
+        model.train()
+        running_loss = 0.0
+        train_corrects = 0
 
-        if self.counter >= self.patience:
-            if self.restore_best_weights:
-                model.load_state_dict(self.best_weights)
-            return True
-        return False
+        for inputs, labels in tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs} (Train)"):
+            inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
 
-    def save_checkpoint(self, model):
-        self.best_weights = model.state_dict().copy()
+            optimizer.zero_grad()
 
-class Trainer:
-    """Main trainer class for The Simpsons classifier"""
+            outputs = model(inputs)
+            _, preds = torch.max(outputs, 1)
+            loss = criterion(outputs, labels)
 
-    def __init__(self, model, train_loader, val_loader, criterion, optimizer, scheduler=None):
-        self.model = model
-        self.train_loader = train_loader
-        self.val_loader = val_loader
-        self.criterion = criterion
-        self.optimizer = optimizer
-        self.scheduler = scheduler
-        self.device = config.DEVICE
+            loss.backward()
+            optimizer.step()
 
-        # Training history
-        self.train_losses = []
-        self.val_losses = []
-        self.train_accuracies = []
-        self.val_accuracies = []
+            running_loss += loss.item() * inputs.size(0)
+            train_corrects += torch.sum(preds == labels.data)
 
-        # Mixed precision training for GPU acceleration
-        self.use_mixed_precision = self.device.type == 'cuda'
-        if self.use_mixed_precision:
-            self.scaler = GradScaler()
-            print("✅ Mixed precision training enabled")
-        else:
-            self.scaler = None
-            print("Mixed precision disabled (CPU mode)")
+        epoch_loss = running_loss / len(train_loader.dataset)
+        epoch_acc = train_corrects.double() / len(train_loader.dataset)
+        print(f"Train Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}")
 
-        # Create directories
-        os.makedirs(config.MODEL_SAVE_PATH, exist_ok=True)
-        os.makedirs(config.CHECKPOINT_PATH, exist_ok=True)
-
-        print(f"Trainer initialized on device: {self.device}")
-
-        # GPU memory optimization
-        if self.device.type == 'cuda':
-            torch.cuda.empty_cache()
-            print(f"GPU memory cleared. Available: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
-
-    def train_epoch(self):
-        """Train for one epoch with mixed precision support"""
-        self.model.train()
-        total_loss = 0.0
-        correct = 0
-        total = 0
-
-        progress_bar = tqdm(self.train_loader, desc='Training')
-
-        for batch_idx, (data, targets) in enumerate(progress_bar):
-            data, targets = data.to(self.device, non_blocking=True), targets.to(self.device, non_blocking=True)
-
-            # Zero gradients
-            self.optimizer.zero_grad()
-
-            if self.use_mixed_precision:
-                # Mixed precision forward pass
-                with autocast():
-                    outputs = self.model(data)
-                    loss = self.criterion(outputs, targets)
-
-                # Mixed precision backward pass
-                self.scaler.scale(loss).backward()
-
-                # Gradient clipping with scaler
-                self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-
-                # Update weights with scaler
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                # Regular precision training
-                outputs = self.model(data)
-                loss = self.criterion(outputs, targets)
-
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                self.optimizer.step()
-
-            # Statistics
-            total_loss += loss.item()
-            _, predicted = outputs.max(1)
-            total += targets.size(0)
-            correct += predicted.eq(targets).sum().item()
-
-            # Update progress bar
-            current_acc = 100.0 * correct / total
-            progress_bar.set_postfix({
-                'Loss': f'{loss.item():.4f}',
-                'Acc': f'{current_acc:.2f}%'
-            })
-
-        epoch_loss = total_loss / len(self.train_loader)
-        epoch_acc = 100.0 * correct / total
-
-        return epoch_loss, epoch_acc
-
-    def validate_epoch(self):
-        """Validate for one epoch with mixed precision support"""
-        self.model.eval()
-        total_loss = 0.0
-        correct = 0
-        total = 0
-        all_predictions = []
-        all_targets = []
+        # --- Validation phase ---
+        model.eval()
+        val_loss = 0.0
+        val_corrects = 0
 
         with torch.no_grad():
-            progress_bar = tqdm(self.val_loader, desc='Validation')
+            for inputs, labels in tqdm(val_loader, desc=f"Epoch {epoch+1}/{num_epochs} (Validation)"):
+                inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
 
-            for data, targets in progress_bar:
-                data, targets = data.to(self.device, non_blocking=True), targets.to(self.device, non_blocking=True)
+                outputs = model(inputs)
+                _, preds = torch.max(outputs, 1)
+                loss = criterion(outputs, labels)
 
-                if self.use_mixed_precision:
-                    # Mixed precision validation
-                    with autocast():
-                        outputs = self.model(data)
-                        loss = self.criterion(outputs, targets)
-                else:
-                    # Regular precision validation
-                    outputs = self.model(data)
-                    loss = self.criterion(outputs, targets)
+                val_loss += loss.item() * inputs.size(0)
+                val_corrects += torch.sum(preds == labels.data)
 
-                # Statistics
-                total_loss += loss.item()
-                _, predicted = outputs.max(1)
-                total += targets.size(0)
-                correct += predicted.eq(targets).sum().item()
+        val_epoch_loss = val_loss / len(val_loader.dataset)
+        val_epoch_acc = val_corrects.double() / len(val_loader.dataset)
+        print(f"Val Loss: {val_epoch_loss:.4f} Acc: {val_epoch_acc:.4f}")
 
-                # Store predictions for analysis
-                all_predictions.extend(predicted.cpu().numpy())
-                all_targets.extend(targets.cpu().numpy())
+        # Save best model
+        if val_epoch_acc > best_acc:
+            best_acc = val_epoch_acc
+            torch.save(model.state_dict(), MODEL_PATH)
+            print(f"Saved best model: Validation Accuracy {best_acc:.4f}")
 
-                # Update progress bar
-                current_acc = 100.0 * correct / total
-                progress_bar.set_postfix({
-                    'Loss': f'{loss.item():.4f}',
-                    'Acc': f'{current_acc:.2f}%'
-                })
+# --- Prediction and CSV output function ---
+def predict_and_save_csv(model, test_loader):
+    """Use the trained model to make predictions on the test set and save as CSV"""
 
-        epoch_loss = total_loss / len(self.val_loader)
-        epoch_acc = 100.0 * correct / total
-
-        return epoch_loss, epoch_acc, all_predictions, all_targets
-
-    def train(self, num_epochs):
-        """Main training loop"""
-        print(f"Starting training for {num_epochs} epochs...")
-        print(f"Device: {self.device}")
-        print(f"Model: {self.model.__class__.__name__}")
-        print(f"Optimizer: {self.optimizer.__class__.__name__}")
-        print(f"Scheduler: {self.scheduler.__class__.__name__ if self.scheduler else 'None'}")
-        print("="*60)
-
-        # Early stopping
-        early_stopping = EarlyStopping(
-            patience=config.PATIENCE,
-            min_delta=0.001,
-            restore_best_weights=True
-        )
-
-        best_val_acc = 0.0
-        start_time = time.time()
-
-        for epoch in range(num_epochs):
-            epoch_start_time = time.time()
-
-            print(f"\nEpoch {epoch+1}/{num_epochs}")
-            print("-" * 40)
-
-            # Training phase
-            train_loss, train_acc = self.train_epoch()
-
-            # Validation phase
-            val_loss, val_acc, val_predictions, val_targets = self.validate_epoch()
-
-            # Update learning rate
-            if self.scheduler:
-                if isinstance(self.scheduler, ReduceLROnPlateau):
-                    self.scheduler.step(val_loss)
-                else:
-                    self.scheduler.step()
-
-            # Store history
-            self.train_losses.append(train_loss)
-            self.val_losses.append(val_loss)
-            self.train_accuracies.append(train_acc)
-            self.val_accuracies.append(val_acc)
-
-            # Print epoch results
-            epoch_time = time.time() - epoch_start_time
-            print(f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%")
-            print(f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}%")
-            print(f"LR: {self.optimizer.param_groups[0]['lr']:.6f}")
-            print(f"Time: {epoch_time:.2f}s")
-
-            # Save best model
-            if val_acc > best_val_acc:
-                best_val_acc = val_acc
-                self.save_model('best_model.pth')
-                print(f"New best validation accuracy: {best_val_acc:.2f}%")
-
-            # Save checkpoint
-            if (epoch + 1) % 10 == 0:
-                self.save_checkpoint(epoch, val_loss)
-
-            # Unfreeze backbone for fine-tuning
-            if (epoch + 1) == config.UNFREEZE_EPOCH and hasattr(self.model, 'unfreeze_backbone'):
-                self.model.unfreeze_backbone()
-                # Reduce learning rate for fine-tuning
-                for param_group in self.optimizer.param_groups:
-                    param_group['lr'] *= 0.1
-                print("Backbone unfrozen for fine-tuning!")
-
-            # Early stopping check
-            if early_stopping(val_loss, self.model):
-                print(f"\nEarly stopping triggered at epoch {epoch+1}")
-                break
-
-        total_time = time.time() - start_time
-        print(f"\nTraining completed in {total_time:.2f}s")
-        print(f"Best validation accuracy: {best_val_acc:.2f}%")
-
-        # Save final model
-        self.save_model('final_model.pth')
-
-        return self.train_losses, self.val_losses, self.train_accuracies, self.val_accuracies
-
-    def save_model(self, filename):
-        """Save model checkpoint"""
-        filepath = os.path.join(config.MODEL_SAVE_PATH, filename)
-        torch.save({
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'train_losses': self.train_losses,
-            'val_losses': self.val_losses,
-            'train_accuracies': self.train_accuracies,
-            'val_accuracies': self.val_accuracies,
-            'config': {
-                'num_classes': config.NUM_CLASSES,
-                'img_size': config.IMG_SIZE,
-                'model_type': 'resnet'
-            }
-        }, filepath)
-        print(f"Model saved to {filepath}")
-
-    def save_checkpoint(self, epoch, val_loss):
-        """Save training checkpoint"""
-        filepath = os.path.join(config.CHECKPOINT_PATH, f'checkpoint_epoch_{epoch+1}.pth')
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'val_loss': val_loss,
-            'train_losses': self.train_losses,
-            'val_losses': self.val_losses,
-            'train_accuracies': self.train_accuracies,
-            'val_accuracies': self.val_accuracies,
-        }, filepath)
-        print(f"Checkpoint saved to {filepath}")
-
-    def plot_training_history(self):
-        """Plot training history"""
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
-
-        # Plot losses
-        ax1.plot(self.train_losses, label='Training Loss', color='blue')
-        ax1.plot(self.val_losses, label='Validation Loss', color='red')
-        ax1.set_title('Model Loss')
-        ax1.set_xlabel('Epoch')
-        ax1.set_ylabel('Loss')
-        ax1.legend()
-        ax1.grid(True)
-
-        # Plot accuracies
-        ax2.plot(self.train_accuracies, label='Training Accuracy', color='blue')
-        ax2.plot(self.val_accuracies, label='Validation Accuracy', color='red')
-        ax2.set_title('Model Accuracy')
-        ax2.set_xlabel('Epoch')
-        ax2.set_ylabel('Accuracy (%)')
-        ax2.legend()
-        ax2.grid(True)
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(config.MODEL_SAVE_PATH, 'training_history.png'), dpi=300)
-        plt.show()
-
-def create_optimizer(model, optimizer_type='adam'):
-    """Create optimizer"""
-    if optimizer_type.lower() == 'adam':
-        optimizer = optim.Adam(
-            model.parameters(),
-            lr=config.LEARNING_RATE,
-            weight_decay=config.WEIGHT_DECAY
-        )
-    elif optimizer_type.lower() == 'sgd':
-        optimizer = optim.SGD(
-            model.parameters(),
-            lr=config.LEARNING_RATE,
-            momentum=0.9,
-            weight_decay=config.WEIGHT_DECAY
-        )
-    elif optimizer_type.lower() == 'adamw':
-        optimizer = optim.AdamW(
-            model.parameters(),
-            lr=config.LEARNING_RATE,
-            weight_decay=config.WEIGHT_DECAY
-        )
+    # Check if model weights exist and load
+    if not os.path.exists(MODEL_PATH):
+        print(f"Warning: Model weights {MODEL_PATH} not found, will use current model for predictions (results may be inaccurate).")
     else:
-        raise ValueError(f"Unknown optimizer type: {optimizer_type}")
+        print(f"Loading best model weights: {MODEL_PATH}")
+        model.load_state_dict(torch.load(MODEL_PATH))
 
-    return optimizer
+    model.eval()
+    results = []
 
-def create_scheduler(optimizer, scheduler_type='reduce_on_plateau'):
-    """Create learning rate scheduler"""
-    if scheduler_type.lower() == 'reduce_on_plateau':
-        scheduler = ReduceLROnPlateau(
-            optimizer,
-            mode='min',
-            factor=config.REDUCE_LR_FACTOR,
-            patience=config.REDUCE_LR_PATIENCE,
-            verbose=True
-        )
-    elif scheduler_type.lower() == 'step':
-        scheduler = StepLR(
-            optimizer,
-            step_size=30,
-            gamma=0.1
-        )
-    else:
-        scheduler = None
+    with torch.no_grad():
+        for inputs, indices in tqdm(test_loader, desc="Predicting"):
+            inputs = inputs.to(DEVICE)
 
-    return scheduler
+            outputs = model(inputs)
+            _, preds = torch.max(outputs, 1)
 
-def main():
-    """Main training function"""
-    print("Initializing training...")
+            # Translate predictions to character names
+            predictions = [IDX_TO_CLASS[p.item()] for p in preds.cpu()]
 
-    # Set random seeds for reproducibility
-    torch.manual_seed(config.RANDOM_SEED)
-    np.random.seed(config.RANDOM_SEED)
+            # Process indices as IDs (indices start from 0, IDs start from 1)
+            image_ids = [(idx.item() + 1) for idx in indices.cpu()]
 
-    # Create data loaders
-    print("Creating data loaders...")
-    train_loader, val_loader = create_data_loaders()
+            for image_id, character in zip(image_ids, predictions):
+                results.append({'id': image_id, 'character': character})
 
-    # Compute class weights for handling imbalance
-    print("Computing class weights...")
-    class_weights = compute_class_weights(train_loader)
-
-    # Create model
-    print("Creating model...")
-    model = create_model(
-        model_type='resnet',
-        pretrained=True,
-        freeze_backbone=config.FREEZE_PRETRAINED_LAYERS
-    )
-
-    # Create loss function
-    print("Creating loss function...")
-    criterion = get_loss_function('cross_entropy', class_weights)
-
-    # Create optimizer
-    print("Creating optimizer...")
-    optimizer = create_optimizer(model, 'adamw')
-
-    # Create scheduler
-    print("Creating scheduler...")
-    scheduler = create_scheduler(optimizer, 'reduce_on_plateau')
-
-    # Create trainer
-    print("Creating trainer...")
-    trainer = Trainer(model, train_loader, val_loader, criterion, optimizer, scheduler)
-
-    # Start training
-    print("Starting training...")
-    train_losses, val_losses, train_accuracies, val_accuracies = trainer.train(config.EPOCHS)
-
-    # Plot training history
-    print("Plotting training history...")
-    trainer.plot_training_history()
-
-    print("Training completed successfully!")
-
-if __name__ == "__main__":
-    main()
+    # Create DataFrame and save as CSV
+    df = pd.DataFrame(results)
+    df.to_csv(OUTPUT_CSV, index=False)
+    print(f"\nPrediction saved to {OUTPUT_CSV}")
+    # print("--- Prediction Results Preview ---")
+    # print(df.head())
