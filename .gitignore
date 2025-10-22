@@ -1,6 +1,7 @@
 *.png
 *.csv
 *.pth
+*.toml
 /dataset
 /models
 /checkpoints

@@ -5,6 +5,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision import transforms, models
+from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 from PIL import Image
 import pandas as pd
 import numpy as np
@@ -153,7 +154,8 @@ class SimpsonsClassifier(nn.Module):
     def __init__(self, num_classes=50):
         super(SimpsonsClassifier, self).__init__()
         # Use ResNet50 as backbone with pretrained weights
-        self.backbone = models.resnet50(pretrained=True)
+        # self.backbone = models.resnet50(pretrained=True)
+        self.backbone = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
 
         # Freeze early layers
         for param in list(self.backbone.parameters())[:-20]:
@@ -177,8 +179,9 @@ class EfficientNetClassifier(nn.Module):
     def __init__(self, num_classes=50):
         super(EfficientNetClassifier, self).__init__()
         try:
-            from torchvision.models import efficientnet_b0
-            self.backbone = efficientnet_b0(pretrained=True)
+            # from torchvision.models import efficientnet_b0
+            # self.backbone = efficientnet_b0(pretrained=True)
+            self.backbone = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
             num_features = self.backbone.classifier[1].in_features
             self.backbone.classifier = nn.Sequential(
                 nn.Dropout(0.5),
@@ -189,7 +192,8 @@ class EfficientNetClassifier(nn.Module):
             )
         except:
             # Fallback to ResNet if EfficientNet not available
-            self.backbone = models.resnet34(pretrained=True)
+            # self.backbone = models.resnet34(pretrained=True)
+            self.backbone = models.resnet34(weights=models.ResNet34_Weights.DEFAULT)
             num_features = self.backbone.fc.in_features
             self.backbone.fc = nn.Sequential(
                 nn.Dropout(0.5),
