@@ -88,8 +88,8 @@ TEST_DATA_PATH = 'dataset/test-renamed_images'
 
 # Image preprocessing parameters
 IMG_SIZE = 224  # ResNet standard input size
-BATCH_SIZE = 32 if DEVICE.type == 'cpu' else 256  # Larger batch size for GPU
-NUM_WORKERS = 0   # Set to 0 for Windows to avoid multiprocessing issues
+BATCH_SIZE = 32 if DEVICE.type == 'cpu' else 128  # Larger batch size for GPU
+NUM_WORKERS = 4   # Set to 0 for Windows to avoid multiprocessing issues
 
 # Training parameters
 LEARNING_RATE = 0.001

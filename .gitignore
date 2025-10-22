@@ -1,5 +1,6 @@
 *.png
 *.csv
+*.pth
 test.py
 /dataset
 /models
