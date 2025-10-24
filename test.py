@@ -12,10 +12,15 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+import random
 
 # Check if CUDA is available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # print(f'Using device: {device}')
+
+TRAIN_PATH = r'D:\Programs\ML\ML_IAII\2-ML_IAII_Classification\dataset\train'
+TEST_PATH = r'D:\Programs\ML\ML_IAII\2-ML_IAII_Classification\dataset\test-renamed_images'
+BACKGROUND_DIR = r'D:\Programs\ML\ML_IAII\2-ML_IAII_Classification\dataset\background'
 
 # Define character names
 CHARACTER_NAMES = [
@@ -33,7 +38,7 @@ CHARACTER_NAMES = [
     'sideshow_bob', 'sideshow_mel', 'snake_jailbird', 'timothy_lovejoy',
     'troy_mcclure', 'waylon_smithers'
 ]
-BATCH_SIZE = 64
+BATCH_SIZE = 128
 
 # Create character to index mapping
 char_to_idx = {char: idx for idx, char in enumerate(CHARACTER_NAMES)}
@@ -79,20 +84,85 @@ class AddSaltPepperNoise(object):
         tensor[noise > 1 - self.pepper_prob] = 0
         return tensor
 
+class AddRandomBackground(object):
+    def __init__(self, backgrounds_dir):
+        self.backgrounds_dir = backgrounds_dir
+        if not os.path.isdir(backgrounds_dir):
+            raise FileNotFoundError(f"Backgrounds directory not found at {backgrounds_dir}. Please check the BACKGROUNDS_DIR variable.")
+        self.background_files = [os.path.join(backgrounds_dir, f) for f in os.listdir(backgrounds_dir)]
+        if not self.background_files:
+            raise ValueError(f"No images found in {backgrounds_dir}.")
+
+    def __call__(self, img):
+        # Convert character image to RGBA
+        img_rgba = img.convert("RGBA")
+
+        # Create a mask from the black and white background by iterating pixels
+        mask = Image.new("L", img_rgba.size, 0)
+        for x in range(img_rgba.width):
+            for y in range(img_rgba.height):
+                r, g, b, a = img_rgba.getpixel((x, y))
+                # Threshold for near-black or near-white
+                if (r < 20 and g < 20 and b < 20) or (r > 235 and g > 235 and b > 235):
+                    mask.putpixel((x, y), 0)  # Transparent
+                else:
+                    mask.putpixel((x, y), 255) # Opaque
+
+        # Choose a random background
+        bg_path = random.choice(self.background_files)
+        background = Image.open(bg_path).convert("RGBA")
+
+        # Add random padding
+        padding_x = random.randint(10, 30)
+        padding_y = random.randint(10, 30)
+        new_size = (img_rgba.width + 2 * padding_x, img_rgba.height + 2 * padding_y)
+
+        # Resize background to the new size (character + padding)
+        background = background.resize(new_size, Image.LANCZOS)
+
+        # Define paste position (top-left corner)
+        paste_position = (padding_x, padding_y)
+        
+        # Paste the character image onto the background using the generated mask
+        background.paste(img_rgba, paste_position, mask)
+
+        return background.convert("RGB")
+
 # Data transforms
 train_transform = transforms.Compose([
+    AddRandomBackground(BACKGROUND_DIR),
     transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.RandomApply([transforms.RandomHorizontalFlip()], p=0.3),
-    transforms.RandomApply([transforms.RandomVerticalFlip()], p=0.1),
-    transforms.RandomApply([transforms.RandomRotation(15)], p=0.3),
-    transforms.RandomApply([transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1)], p=0.3),
+    
+    # Geometric
+    transforms.RandomHorizontalFlip(p=0.5),
+    transforms.RandomVerticalFlip(p=0.2),
+    transforms.RandomApply([transforms.RandomRotation(30)], p=0.5),
+    transforms.RandomApply([transforms.RandomPerspective(distortion_scale=0.6, p=1.0)], p=0.3),
+    transforms.RandomApply([transforms.RandomAffine(degrees=(-70, 70), translate=(0.1, 0.3), scale=(0.5, 0.75))], p=0.3),
+    transforms.RandomApply([transforms.ElasticTransform(alpha=100.0)], p=0.2),
+
+    # Color and Brightness
+    transforms.RandomApply([transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1)], p=0.5),
     transforms.RandomGrayscale(p=0.1),
-    transforms.RandomApply([transforms.RandomPerspective(distortion_scale=0.3)], p=0.2),
-    transforms.RandomApply([transforms.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.8, 1.2))], p=0.3),
-    transforms.RandomApply([AddGaussianNoise(0., 0.02)], p=0.2),
-    transforms.RandomApply([AddSpeckleNoise(noise_level=0.05)], p=0.1),
-    transforms.RandomApply([AddSaltPepperNoise(salt_prob=0.02, pepper_prob=0.02)], p=0.1),
+    transforms.RandomInvert(p=0.1),
+    transforms.RandomApply([transforms.RandomPosterize(bits=4)], p=0.2),
+    transforms.RandomApply([transforms.RandomSolarize(threshold=0.5)], p=0.1),
+    transforms.RandomApply([transforms.RandomAdjustSharpness(sharpness_factor=2)], p=0.3),
+
+    # Filtering
+    transforms.RandomApply([transforms.GaussianBlur(kernel_size=5)], p=0.2),
+
+    # Convert to Tensor
+    transforms.ToTensor(),
+
+    # Noise (Applied on Tensor)
+    transforms.RandomApply([AddGaussianNoise(0., 0.05)], p=0.2),
+    transforms.RandomApply([AddPoissonNoise(lam=0.1)], p=0.2),
+    transforms.RandomApply([AddSpeckleNoise(noise_level=0.1)], p=0.2),
+    transforms.RandomApply([AddSaltPepperNoise(salt_prob=0.03, pepper_prob=0.03)], p=0.2),
+    AddGaussianNoise(0., 0.001), 
+
+    # Normalize (Must be last)
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
@@ -316,7 +386,7 @@ def main():
     print("Loading datasets...")
 
     # Load training dataset
-    train_dataset = SimpsonsDataset('dataset/train', transform=train_transform, is_train=True)
+    train_dataset = SimpsonsDataset(TRAIN_PATH, transform=train_transform, is_train=True)
     print(f"Total training samples: {len(train_dataset)}")
 
     # Split training data into train and validation
@@ -325,8 +395,8 @@ def main():
     train_subset, val_subset = random_split(train_dataset, [train_size, val_size])
 
     # Enhanced splitting with different transforms
-    train_full_aug = SimpsonsDataset('dataset/train', transform=train_transform, is_train=True)
-    val_full_clean = SimpsonsDataset('dataset/train', transform=val_transform, is_train=True)
+    train_full_aug = SimpsonsDataset(TRAIN_PATH, transform=train_transform, is_train=True)
+    val_full_clean = SimpsonsDataset(TRAIN_PATH, transform=val_transform, is_train=True)
     train_indices = list(range(len(train_full_aug)))
     train_idx, val_idx = train_test_split(train_indices, test_size=0.2, random_state=42)
     train_subset = torch.utils.data.Subset(train_full_aug, train_idx)
@@ -364,7 +434,7 @@ def main():
     model.load_state_dict(torch.load('best_simpsons_model.pth'))
 
     # Load test dataset
-    test_dataset = SimpsonsDataset('dataset/test-renamed_images', transform=test_transform, is_train=False)
+    test_dataset = SimpsonsDataset(TEST_PATH, transform=test_transform, is_train=False)
     test_loader = DataLoader(test_dataset, BATCH_SIZE, shuffle=False, num_workers=4)
 
     print(f"Test samples: {len(test_dataset)}")
@@ -411,7 +481,7 @@ def main():
 
     plt.tight_layout()
     plt.savefig('training_curves.png')
-    plt.show()
+    # plt.show()
 
     print(f"Best validation accuracy: {max(val_accs):.2f}%")
     print("Training completed!")
