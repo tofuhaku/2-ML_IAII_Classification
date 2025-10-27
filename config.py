@@ -7,6 +7,10 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TRAIN_PATH = r'D:\Programs\ML\ML_IAII\2-ML_IAII_Classification\dataset\train'
 TEST_PATH = r'D:\Programs\ML\ML_IAII\2-ML_IAII_Classification\dataset\test-renamed_images'
 BACKGROUND_DIR = r'D:\Programs\ML\ML_IAII\2-ML_IAII_Classification\dataset\background'
+MODEL_WEIGHTS_PATH = 'best_model.pth'
+OUTPUT_CSV_PATH = 'submission.csv'
+STATS_PATH = 'stats.csv'
+
 
 BATCH_SIZE = 128
 NUM_EPOCHS = 50
@@ -14,6 +18,7 @@ NUM_WORKERS = 8
 NUM_CLASSES = 50
 LEARNING_RATE = 1e-4
 IMAGE_SIZE = 224
+VAL_SPLIT = 0.2
 
 # Define character names
 CHARACTER_NAMES = [
