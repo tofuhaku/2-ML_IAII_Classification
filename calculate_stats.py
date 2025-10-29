@@ -39,14 +39,14 @@ def calculate_and_save_stats():
     std_list = std.tolist()
     
     # Write stats to file
-    # stats = {'mean': mean_list, 'std': std_list}
+    stats = {'mean': mean_list, 'std': std_list}
     
-    # with open(config.STATS_PATH, 'w') as f:
-    #     json.dump(stats, f)
+    with open(config.STATS_PATH, 'w') as f:
+        json.dump(stats, f)
         
-    # print(f"Stats saved to {config.STATS_PATH}")
-    # print(f"Dataset Mean: {mean_list}")
-    # print(f"Dataset Std: {std_list}")
+    print(f"Stats saved to {config.STATS_PATH}")
+    print(f"Dataset Mean: {mean_list}")
+    print(f"Dataset Std: {std_list}")
     
     return mean_list, std_list
 

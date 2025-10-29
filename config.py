@@ -11,7 +11,6 @@ MODEL_WEIGHTS_PATH = 'best_model.pth'
 OUTPUT_CSV_PATH = 'submission.csv'
 STATS_PATH = 'stats.csv'
 
-
 BATCH_SIZE = 128
 NUM_EPOCHS = 50
 NUM_WORKERS = 8
