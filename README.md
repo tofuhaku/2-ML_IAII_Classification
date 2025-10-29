@@ -136,4 +136,4 @@
 
 本次 lab 嘗試使用 `EfficientNetClassifier` 和 `ResNet-50`，在本地的 RTX3060 進行訓練。嘗試幾次發現由於資料擴充複雜，`ResNet-50` 訓練的時間超乎預期的長（約 50min / epoch），在相同的資料擴充下效果也沒有特別突出，因此最後使用 `EfficientNetClassifier`，耗時較短（約 20min / epoch）效果也算優秀，兩者模型使用的參數量相差約一倍。本次實驗的瓶頸其實是硬體限制，在有限的資源下要取捨 performance 和時間成本的消耗，最後是訓練約 15 小時達到 test dataset 辨識正確率 93%。
 
-<img src="D:\Programs\ML\ML_IAII\2-ML_IAII_Classification\training_curves.png" alt="training_curves" style="zoom:60%;" />
+<img src=".\training_curves.png" alt="training_curves" style="zoom:60%;" />
